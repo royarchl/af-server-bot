@@ -1,0 +1,8 @@
+# C++ compilation objects
+*.o
+
+# CMake build files
+build/
+
+# 3rd-party dependencies
+external/
