@@ -3,6 +3,7 @@
 
 # CMake build files
 build/
+.cache/
 
 # 3rd-party dependencies
 external/
