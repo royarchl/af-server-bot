@@ -5,6 +5,7 @@
 #include <steam/steam_api.h>
 
 #include <cstdio>
+#include <iostream>
 #include <string>
 #include <map>
 #include <arpa/inet.h>  // FOR INET_ADDR
@@ -30,21 +31,20 @@ public:
         return ntohl(networkIP);
     }
 
+    void GetRules(std::map<std::string, std::string>& rules) const { rules = m_ServerRules; }
+
+    // RETURNS AN INSTANCE PER SERVER RULE
     virtual void RulesResponded(const char* pchRule, const char* pchValue) override
     {
-        printf("Rule: %s, Value: %s\n", pchRule, pchValue);
+        m_ServerRules[pchRule] = pchValue;
     }
 
-    virtual void RulesFailedToRespond() override
-    {
-        printf("Server failed to respond to rules query\n");
-        ResetQuery();
-    }
+    virtual void RulesFailedToRespond() override { ResetQuery(); }
 
+    // SERVER HAS FINISHED RESPONDING (SUCCESS)
     virtual void RulesRefreshComplete() override
     {
-        printf("Rules refresh complete\n");
-
+        // RETURN THE PLAYER COUNT RATHER THAN PRINT
         for (const auto& rule : m_ServerRules)
         {
             printf("%s: %s\n", rule.first.c_str(), rule.second.c_str());
@@ -100,7 +100,7 @@ int main()
     }
 
     // uint32      serverIP   = CServerRulesResponse.IPStringToHostOrder(sserverIP);
-    std::string m_szServerIP   = "47.152.10.229";
+    std::string m_szServerIP   = "127.0.0.1";
     uint16      m_usServerPort = 27015;
 
     CServerRulesResponse rulesResponse;

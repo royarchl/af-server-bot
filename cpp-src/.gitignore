@@ -1,5 +1,6 @@
 # C++ compilation objects
 *.o
+*.c
 
 # CMake build files
 build/
