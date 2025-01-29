@@ -23,7 +23,7 @@ void* steamworks_init()
     return pvAPI;
 }
 
-ServerRule* steawmworks_get_rules(void* pvAPI, const char* pchIP, uint16 usPort)
+ServerRule* steawmworks_get_server_rules(void* pvAPI, const char* pchIP, uint16 usPort)
 {
     CSteamworksAPI* steamAPI = reinterpret_cast<CSteamworksAPI*>(pvAPI);
 
@@ -32,7 +32,7 @@ ServerRule* steawmworks_get_rules(void* pvAPI, const char* pchIP, uint16 usPort)
         return nullptr;
     }
 
-    /* Make sure the callbacks have finished before continuing. */
+    /* MAKE SURE THE CALLBACKS HAVE FINISHED BEFORE CONTINUING! */
 
     std::map<std::string, std::string> rules;
     steamAPI->CopyRulesMap(rules);
@@ -51,6 +51,14 @@ ServerRule* steawmworks_get_rules(void* pvAPI, const char* pchIP, uint16 usPort)
         ++i;
     }
     return pRulePairs;
+}
+
+void steamworks_initiate_callback_request() { SteamAPI_RunCallbacks(); }
+
+void steamworks_cancel_server_rules_query(void* pvAPI)
+{
+    CSteamworksAPI* steamAPI = reinterpret_cast<CSteamworksAPI*>(pvAPI);
+    steamAPI->CancelQuery();
 }
 
 void steamworks_shutdown(void* pvAPI, ServerRule* pRulePairs)
