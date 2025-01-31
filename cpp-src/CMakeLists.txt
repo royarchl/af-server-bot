@@ -14,10 +14,16 @@ set(CMAKE_CXX_STANDARD 17)
 SET(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Add the Steamworks SDK include directory
-include_directories(external/steamworks_sdk/public)
+# include_directories(external/steamworks_sdk/public)
 
 # Automatically grab all .cc files from the src/ directory
-file(GLOB_RECURSE SOURCES "src/*.cc")
+# file(GLOB_RECURSE SOURCES "src/*.cc")
+
+set(SOURCES
+    src/a2s_query_handler.cc
+    src/a2s_test_main.cc
+    # src/a2s_api.cc
+)
 
 # Define target executable
 add_executable(SteamServerQuery ${SOURCES})
@@ -26,9 +32,9 @@ add_executable(SteamServerQuery ${SOURCES})
 # link_directories(${CMAKE_SOURCE_DIR}/external/steamworks_sdk/redistributable_bin/linux64/)
 
 # Link to the Steamworks SDK library
-target_link_libraries(SteamServerQuery
-  ${CMAKE_SOURCE_DIR}/external/steamworks_sdk/redistributable_bin/linux64/libsteam_api.so
-  # steam_api
-  pthread
-  dl
-)
+# target_link_libraries(SteamServerQuery
+#   ${CMAKE_SOURCE_DIR}/external/steamworks_sdk/redistributable_bin/linux64/libsteam_api.so
+#   # steam_api
+#   pthread
+#   dl
+# )
