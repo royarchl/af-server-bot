@@ -54,24 +54,36 @@ void printHex(const uint8_t* data, size_t size)
 
 int main()
 {
-    char buffer[MAX_PAYLOAD];
+    // char buffer[MAX_PAYLOAD];
+    uint8_t buffer[MAX_PAYLOAD];
 
-    struct sockaddr_in serverAddr;
-    memset(&serverAddr, 0, sizeof(serverAddr));
-    serverAddr.sin_family      = AF_INET;
-    serverAddr.sin_port        = htons(27015);
-    serverAddr.sin_addr.s_addr = inet_addr("47.152.10.229");
+    struct sockaddr_in sockTargetAddress = {
+        .sin_family = AF_INET,
+        .sin_port   = htons(27015),
+        .sin_addr   = { inet_addr("127.0.0.1") },
+    };
+
+    // struct sockaddr_in serverAddr;
+    // memset(&serverAddr, 0, sizeof(serverAddr));
+    // serverAddr.sin_family      = AF_INET;
+    // serverAddr.sin_port        = htons(27015);
+    // serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);  // Internet, UDP, Default
 
     uint8_t queryData[] = { 0xFF, 0xFF, 0xFF, 0xFF, A2S_RULES, 0xFF, 0xFF, 0xFF, 0xFF };
-    sendto(
-        sock, queryData, sizeof(queryData), 0, (struct sockaddr*) &serverAddr, sizeof(serverAddr));
+    sendto(sock,
+           queryData,
+           sizeof(queryData),
+           0,
+           (struct sockaddr*) &sockTargetAddress,
+           sizeof(sockTargetAddress));
 
     ssize_t bufferSize = recvfrom(sock, buffer, sizeof(buffer), 0, NULL, NULL);
 
     if (buffer[4] == 0x41)  // Checking for challenge response
     {
+        // De-referencing a new (buffer) array, starting from the 6th index
         uint32_t challengeNumber = *reinterpret_cast<uint32_t*>(&buffer[5]);
 
         uint8_t queryWithChall[9] = { 0xFF, 0xFF, 0xFF, 0xFF, A2S_RULES };
@@ -85,8 +97,8 @@ int main()
                queryWithChall,
                sizeof(queryWithChall),
                0,
-               (struct sockaddr*) &serverAddr,
-               sizeof(serverAddr));
+               (struct sockaddr*) &sockTargetAddress,
+               sizeof(sockTargetAddress));
 
         bufferSize = recvfrom(sock, buffer, sizeof(buffer), 0, NULL, NULL);
     }
@@ -138,12 +150,12 @@ int main()
     printHex(reinterpret_cast<uint8_t*>(buffer), bufferSize);
 
     std::string header = packets[0];
-    std::cout << "Header : " << header << std::endl;
+    std::cout << "Header: " << header << std::endl;
 
     // Output the rules map
     for (const auto& rule : rulesMap)
     {
-        std::cout << rule.first << " : " << rule.second << std::endl;
+        std::cout << rule.first << ": " << rule.second << std::endl;
     }
 
     close(sock);
