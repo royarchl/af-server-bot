@@ -35,7 +35,6 @@ func getServerRules(ip string, port int) {
 	}
 
 	fmt.Println(mapGoRules)
-	fmt.Println(mapGoRules["PlayerCount_i"])
 }
 
 // [31 JAN 2025 @ 3:39 PM GMT-8] Forgive me for the shitshow that is about to ensue
@@ -46,12 +45,17 @@ func main() {
 
 	go func() { // Creates a goroutine for concurrency
 		defer wg.Done() // Mark the task done when the goroutine finishes
-		for range time.Tick(time.Minute * 1) {
+		for true {      // Make the condition the bot running(?)
 			getServerRules("47.152.10.229", 27015)
-
-			// In here, update the bot status based on players and (server) response
-			// - this is meant to decide between Online and DnD
+			time.Sleep(time.Minute * 1)
 		}
+
+		// for range time.Tick(time.Minute * 1) {
+		// 	getServerRules("47.152.10.229", 27015)
+
+		// 	// In here, update the bot status based on players and (server) response
+		// 	// - this is meant to decide between Online and DnD
+		// }
 	}()
 
 	fmt.Println("This method is running at the same time.")
