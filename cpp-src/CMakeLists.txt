@@ -21,12 +21,16 @@ SET(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(SOURCES
     src/a2s_query_handler.cc
-    src/a2s_test_main.cc
+    src/a2s_query_handler_wrapper.cc
+    # src/a2s_test_main.cc
     # src/a2s_api.cc
 )
 
+# Create a static library
+add_library(A2SQuery STATIC ${SOURCES})
+
 # Define target executable
-add_executable(SteamServerQuery ${SOURCES})
+# add_executable(SteamServerQuery ${SOURCES})
 
 # Add directory containing libsteam_api.so to linker search path
 # link_directories(${CMAKE_SOURCE_DIR}/external/steamworks_sdk/redistributable_bin/linux64/)
