@@ -9,11 +9,11 @@
 #include <sys/types.h>
 #include <vector>
 
-#define sFAILURE -1
-#define sMAX_PAYLOAD 1400
-#define sA2S_RULES 0x56
-#define sS2C_CHALLENGE 0x41
-#define NULL_TERMINATOR 0x00
+// #define sFAILURE -1
+// #define sMAX_PAYLOAD 1400
+// #define sA2S_RULES 0x56
+// #define sS2C_CHALLENGE 0x41
+// #define NULL_TERMINATOR 0x00
 
 
 A2SQueryHandler::A2SQueryHandler(const char* pchIP, uint16_t unPort)
@@ -34,6 +34,10 @@ A2SQueryHandler::~A2SQueryHandler()
 
 void A2SQueryHandler::QueryServerRules()
 {
+    const size_t  sMAX_PAYLOAD   = 1400;
+    const uint8_t sA2S_RULES     = 0x56;
+    const uint8_t sS2C_CHALLENGE = 0x41;
+
     uint8_t* pArrBuffer = new uint8_t[sMAX_PAYLOAD];  // Allocate on the heap
 
     uint8_t arrQueryData[] = { 0xFF, 0xFF, 0xFF, 0xFF, sA2S_RULES, 0xFF, 0xFF, 0xFF, 0xFF };
@@ -66,7 +70,6 @@ void A2SQueryHandler::QueryServerRules()
                reinterpret_cast<struct sockaddr*>(&m_sockTargetAddress),
                sizeof(m_sockTargetAddress));
 
-        // nBufferSize = recvfrom(m_nSock, pArrBuffer, sizeof(pArrBuffer), 0, NULL, NULL);
         nBufferSize = recvfrom(m_nSock, pArrBuffer, sMAX_PAYLOAD, 0, NULL, NULL);
     }
 
@@ -75,6 +78,8 @@ void A2SQueryHandler::QueryServerRules()
 
 void A2SQueryHandler::ParseUdpPacketsResponse()
 {
+    const uint8_t NULL_TERMINATOR = 0x00;
+
     std::vector<std::string> packets;
     std::string              currentPacket;
 
@@ -115,11 +120,6 @@ void A2SQueryHandler::ParseUdpPacketsResponse()
         {
             std::cerr << "Incomplete rule-value pair" << std::endl;
         }
-    }
-
-    for (const auto& rule : m_mapRules)
-    {
-        std::cout << rule.first << ": " << rule.second << std::endl;
     }
 }
 
