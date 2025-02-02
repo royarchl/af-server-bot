@@ -12,12 +12,8 @@ run-bot
 .env
 
 # CMake build files
-build/
-.cache/
+cpp-source/.cache/
+cpp-source/build/
 
 # 3rd-party dependencies
-external/
-
-# all C++ build files
-cpp-src/
-cpp-source/
+cpp-source/external/
