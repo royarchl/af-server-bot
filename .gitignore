@@ -1,7 +1,15 @@
 # C++ compilation objects
 *.o
 *.c
+
+# Temp build
+run-bot
+
+# Backup files
 *.backup
+
+# Environment variables
+.env
 
 # CMake build files
 build/
