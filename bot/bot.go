@@ -19,6 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/royarchl/af-server-bot/bot/commands"
 )
 
 // [31 JAN 2025 @ 3:39 PM GMT-8] Forgive me for the shitshow that is about to ensue
@@ -61,9 +62,13 @@ func Run() {
 	session, err := discordgo.New("Bot " + BotToken)
 	CheckNilErr(err)
 
+	session.AddHandler(commands.SetCommands)
+
 	err = session.Open()
 	CheckNilErr(err)
 	defer session.Close()
+
+	commands.RegisterCommands(session)
 
 	log.Println("Bot running... (Press Ctrl-C to exit)")
 
@@ -74,16 +79,24 @@ func Run() {
 	go func() {
 		log.Println("Beginning server query loop...")
 
+		prevPlayerCount := -1
+		maxPlayers := os.Getenv("MAX_PLAYERS")
+
 		now := time.Now()
 
 		minutesPast := now.Minute() % 5
 		sleepDuration := time.Minute * time.Duration(5-minutesPast)
 
 		for true {
-			tempMap := getServerRules(ipAddr, port)
+			commands.ServerSettings = getServerRules(ipAddr, port)
 
-			statusMessage := fmt.Sprintf("Online - Active Players: %s/6", tempMap["PlayerCount_i"])
-			session.UpdateCustomStatus(statusMessage)
+			currentPlayerCount, err := strconv.Atoi(commands.ServerSettings["PlayerCount_i"])
+			CheckNilErr(err)
+
+			if currentPlayerCount != prevPlayerCount {
+				statusMessage := fmt.Sprintf("Online - Active Players: %d/%s", currentPlayerCount, maxPlayers)
+				session.UpdateCustomStatus(statusMessage)
+			}
 
 			time.Sleep(sleepDuration)
 		}
