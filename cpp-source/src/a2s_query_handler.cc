@@ -1,23 +1,37 @@
 #include "a2s_query_handler.h"
 
 #include <arpa/inet.h>
-#include <cstddef>
-#include <cstdint>
 #include <cstring>
-#include <iostream>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <vector>
+#include <map>
+#include <stdexcept>
+#include <string>
+#include <unistd.h>
 
-// #define sFAILURE -1
-// #define sMAX_PAYLOAD 1400
-// #define sA2S_RULES 0x56
-// #define sS2C_CHALLENGE 0x41
-// #define NULL_TERMINATOR 0x00
+
+struct BufferWrapperException : public std::runtime_error
+{
+public:
+    BufferWrapperException(int errorCode, const std::string& errorMsg)
+    : std::runtime_error(errorMsg)
+    , m_errorCode(errorCode)
+    {
+    }
+
+    int getErrorCode() const { return m_errorCode; }
+
+private:
+    int m_errorCode;
+};
 
 
 A2SQueryHandler::A2SQueryHandler(const char* pchIP, uint16_t unPort)
 {
+    if (m_nSock == -1)
+    {
+        // Never caught by anything; this ~should just exit/break
+        throw BufferWrapperException(5001, "Failure to create socket");
+    }
+
     m_sockTargetAddress = {
         .sin_family = AF_INET,
         .sin_port   = htons(unPort),
@@ -25,67 +39,125 @@ A2SQueryHandler::A2SQueryHandler(const char* pchIP, uint16_t unPort)
     };
 }
 
-A2SQueryHandler::~A2SQueryHandler()
+A2SQueryHandler::~A2SQueryHandler() { close(m_nSock); }
+
+BufferWrapper* A2SQueryHandler::PackageResponse()
 {
-    // C++ Standard views deleting a nullptr as a non-op so it's fine
-    delete[] m_pBufferWrapper->m_punBuffer;
-    delete m_pBufferWrapper;
+    try
+    {
+        std::vector<uint8_t>               serverResponse = QueryServer();
+        std::map<std::string, std::string> rulesMap       = ParseUdpPacketsResponse(serverResponse);
+
+        return new BufferWrapper{ rulesMap, 0, {} };
+    }
+    catch (const BufferWrapperException& e)
+    {
+        return new BufferWrapper{ {}, e.getErrorCode(), e.what() };
+    }
+    return new BufferWrapper;
 }
 
-void A2SQueryHandler::QueryServerRules()
+void A2SQueryHandler::DeleteBuffer(BufferWrapper* buffer) { delete buffer; }
+
+// Remove the try-catch block, and instead move it to the PackageResponse() method
+// - This method will simply throw errors that will be caught in the parent method
+std::vector<uint8_t> A2SQueryHandler::QueryServer()
 {
-    const size_t  sMAX_PAYLOAD   = 1400;
-    const uint8_t sA2S_RULES     = 0x56;
-    const uint8_t sS2C_CHALLENGE = 0x41;
+    static constexpr size_t  sMAX_PAYLOAD   = 1400;
+    static constexpr uint8_t sA2S_RULES     = 0x56;
+    static constexpr uint8_t sS2C_CHALLENGE = 0x41;
+    static constexpr int     SOCKET_ERROR   = -1;
 
-    uint8_t* pArrBuffer = new uint8_t[sMAX_PAYLOAD];  // Allocate on the heap
+    std::vector<uint8_t> buffer(sMAX_PAYLOAD);
+    std::vector<uint8_t> query{ 0xFF, 0xFF, 0xFF, 0xFF, sA2S_RULES, 0xFF, 0xFF, 0xFF, 0xFF };
 
-    uint8_t arrQueryData[] = { 0xFF, 0xFF, 0xFF, 0xFF, sA2S_RULES, 0xFF, 0xFF, 0xFF, 0xFF };
-    sendto(m_nSock,
-           arrQueryData,
-           sizeof(arrQueryData),
-           0,
-           reinterpret_cast<struct sockaddr*>(&m_sockTargetAddress),
-           sizeof(m_sockTargetAddress));
-
-    // ssize_t has range [-1...2^15-1] and int has range [-2^15...2^15-1]
-    ssize_t nBufferSize = recvfrom(m_nSock, pArrBuffer, sMAX_PAYLOAD, 0, NULL, NULL);
-
-    if (pArrBuffer[4] == sS2C_CHALLENGE)
+    auto sendQuery = [this](const std::vector<uint8_t>& queryData) -> bool
     {
-        uint32_t unChallengeNumber;  // Challenge number is 4 bytes
-        memcpy(&unChallengeNumber, &pArrBuffer[5], sizeof(unChallengeNumber));
+        auto result = sendto(m_nSock,
+                             queryData.data(),
+                             queryData.size(),
+                             0,
+                             reinterpret_cast<const sockaddr*>(&m_sockTargetAddress),
+                             sizeof(m_sockTargetAddress));
+        return result != SOCKET_ERROR;
+    };
 
-        uint8_t arrQueryWithChall[9] = { 0xFF, 0xFF, 0xFF, 0xFF, sA2S_RULES };
+    auto receiveResponse = [this](std::vector<uint8_t>& buffer, int timeout_ms = 5000) -> ssize_t
+    {
+        buffer.resize(sMAX_PAYLOAD);
+        uint8_t* raw_buffer = buffer.data();
 
-        for (int i = 0; i < sizeof(unChallengeNumber); ++i)
+        struct timeval tv;
+        tv.tv_sec  = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+        if (setsockopt(m_nSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
         {
-            arrQueryWithChall[5 + i] = static_cast<uint8_t>((unChallengeNumber >> (8 * i)) & 0xFF);
+            throw BufferWrapperException(5002, "Failure to apply socket timeout");
         }
 
-        sendto(m_nSock,
-               arrQueryWithChall,
-               sizeof(arrQueryWithChall),
-               0,
-               reinterpret_cast<struct sockaddr*>(&m_sockTargetAddress),
-               sizeof(m_sockTargetAddress));
+        auto result = recvfrom(m_nSock, raw_buffer, sMAX_PAYLOAD, 0, nullptr, nullptr);
 
-        nBufferSize = recvfrom(m_nSock, pArrBuffer, sMAX_PAYLOAD, 0, NULL, NULL);
+        if (result == SOCKET_ERROR)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                throw BufferWrapperException(5003,
+                                             "Response timeout (request exceeded "
+                                                 + std::to_string(timeout_ms / 1000) + "s)");
+            }
+            throw BufferWrapperException(5004, "Failure to receive data");
+        }
+        return result;
+    };
+
+    if (!sendQuery(query))
+    {
+        throw BufferWrapperException(5005, "Failure to send initial query");
     }
 
-    m_pBufferWrapper = new BufferWrapper{ pArrBuffer, static_cast<size_t>(nBufferSize) };
+    ssize_t bufferSize = receiveResponse(buffer);
+    if (bufferSize < 5)
+    {
+        throw BufferWrapperException(5006, "Server response too small");
+    }
+
+    if (buffer[4] == sS2C_CHALLENGE)
+    {
+        uint32_t challengeNumber;
+        std::memcpy(&challengeNumber, &buffer[5], sizeof(challengeNumber));
+
+        for (int i = 0; i < sizeof(challengeNumber); ++i)
+        {
+            query[5 + i] = static_cast<uint8_t>((challengeNumber >> (8 * i)) & 0xFF);
+        }
+
+        if (!sendQuery(query))
+        {
+            throw BufferWrapperException(5007, "Failure to send challenge query");
+        }
+
+        bufferSize = receiveResponse(buffer);
+
+        if (bufferSize < 5)
+        {
+            throw BufferWrapperException(5008, "Challenge response too small");
+        }
+    }
+
+    return buffer;
 }
 
-void A2SQueryHandler::ParseUdpPacketsResponse()
+std::map<std::string, std::string> A2SQueryHandler::ParseUdpPacketsResponse(
+    const std::vector<uint8_t>& buffer)
 {
-    const uint8_t NULL_TERMINATOR = 0x00;
+    static constexpr uint8_t NULL_TERMINATOR = 0x00;
 
     std::vector<std::string> packets;
     std::string              currentPacket;
 
-    for (size_t i = 0; i < m_pBufferWrapper->m_unSize; ++i)
+    for (const auto& byte : buffer)
     {
-        if (m_pBufferWrapper->m_punBuffer[i] == NULL_TERMINATOR)
+        if (byte == NULL_TERMINATOR)
         {
             if (!currentPacket.empty())
             {
@@ -95,7 +167,7 @@ void A2SQueryHandler::ParseUdpPacketsResponse()
         }
         else
         {
-            currentPacket += m_pBufferWrapper->m_punBuffer[i];
+            currentPacket += byte;
         }
     }
 
@@ -106,24 +178,20 @@ void A2SQueryHandler::ParseUdpPacketsResponse()
 
     if (packets.empty())
     {
-        std::cerr << "No packets found" << std::endl;
-        return;
+        throw BufferWrapperException(4001, "No packets found");
     }
 
+    std::map<std::string, std::string> returnMap;
     for (size_t i = 1; i < packets.size(); i += 2)
     {
         if (i + 1 < packets.size())
         {
-            m_mapRules[packets[i]] = packets[i + 1];
+            returnMap[packets[i]] = packets[i + 1];
         }
         else
         {
-            std::cerr << "Incomplete rule-value pair" << std::endl;
+            throw BufferWrapperException(4002, "Incomplete rule-value pair");
         }
     }
-}
-
-void A2SQueryHandler::CopyRulesMap(std::map<std::string, std::string>& mapRulesRef) const
-{
-    mapRulesRef = m_mapRules;
+    return returnMap;
 }

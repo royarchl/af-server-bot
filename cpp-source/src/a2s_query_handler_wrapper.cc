@@ -8,30 +8,36 @@ void* a2s_query_server_rules(const char* pchIP, uint16_t unPort)
 {
     A2SQueryHandler handler(pchIP, unPort);
 
-    handler.QueryServerRules();
-    handler.ParseUdpPacketsResponse();
+    BufferWrapper* testBuffer = handler.PackageResponse();
 
-    std::map<std::string, std::string> mapTemp;
-    handler.CopyRulesMap(mapTemp);
-
-    ServerRule* pArrRulePairs = new ServerRule[mapTemp.size()];
+    ServerRule* pArrRulePairs = new ServerRule[testBuffer->m_mapRules.size()];
 
     int i = 0;
-    for (const auto& entry : mapTemp)
+    for (const auto& rulePair : testBuffer->m_mapRules)
     {
-        pArrRulePairs[i].m_pchRule  = entry.first.c_str();
-        pArrRulePairs[i].m_pchValue = entry.second.c_str();
+        pArrRulePairs[i].m_pchRule  = rulePair.first.c_str();
+        pArrRulePairs[i].m_pchValue = rulePair.second.c_str();
         ++i;
     }
 
-    Payload* pPayload = new Payload{ pArrRulePairs, mapTemp.size() };
+    Payload* pPayload = new Payload{ pArrRulePairs,
+                                     testBuffer->m_mapRules.size(),
+                                     testBuffer->m_nErrorCode,
+                                     testBuffer->m_szErrorMsg.c_str() };
+
     return reinterpret_cast<void*>(pPayload);
 }
 
-void a2s_free_rules_memory(void* pArrRulePairs)
+bool a2s_free_rules_memory(void* pPayload)
 {
-    if (pArrRulePairs)
+    if (pPayload)
     {
-        delete[] reinterpret_cast<ServerRule*>(pArrRulePairs);
+        Payload* payload = reinterpret_cast<Payload*>(pPayload);
+
+        delete[] payload->m_pMapRules;
+        delete payload;
+
+        return true;
     }
+    return false;
 }
