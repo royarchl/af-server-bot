@@ -29,6 +29,7 @@ var (
 	BotChannelID          string
 	SnapshotChannelID     string
 	LastSnapshotMessageID string
+	BackupsOn             bool
 )
 
 func CheckNilErr(e error) {
@@ -194,8 +195,21 @@ func InitServerQueryLoop(session *discordgo.Session) {
 			CheckNilErr(err)
 
 			if currentPlayerCount != prevPlayerCount {
-				statusMessage := fmt.Sprintf("Online - Active Players: %d/%s", currentPlayerCount, maxPlayers)
-				session.UpdateCustomStatus(statusMessage)
+				if BackupsOn == true {
+					session.UpdateStatusComplex(discordgo.UpdateStatusData{
+						Activities: []*discordgo.Activity{
+							{
+								Name: fmt.Sprintf(" - Active Players: %d/%s", currentPlayerCount, maxPlayers),
+								Type: discordgo.ActivityTypeStreaming,
+								URL:  "https://twitch.tv/idk",
+							},
+						},
+						Status: "online",
+					})
+				} else {
+					statusMessage := fmt.Sprintf("Online - Active Players: %d/%s", currentPlayerCount, maxPlayers)
+					session.UpdateCustomStatus(statusMessage)
+				}
 			}
 		}
 

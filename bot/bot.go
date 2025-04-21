@@ -76,6 +76,7 @@ func Run() {
 
 				if matches[1] != NO_PLAYERS {
 					backupsEnabled = true
+					shared.BackupsOn = true
 					session.ChannelMessageSendEmbed(shared.BotChannelID, &discordgo.MessageEmbed{
 						Type:        discordgo.EmbedTypeRich,
 						Title:       "Backups enabled.",
@@ -84,6 +85,7 @@ func Run() {
 					})
 				} else {
 					backupsEnabled = false
+					shared.BackupsOn = false
 					session.ChannelMessageSendEmbed(shared.BotChannelID, &discordgo.MessageEmbed{
 						Type:        discordgo.EmbedTypeRich,
 						Title:       "Backups suspended.",
