@@ -1,221 +1,188 @@
 package bot
 
-/*
-#cgo CXXFLAGS: -std=c++11
-#cgo LDFLAGS: -L${SRCDIR}/../lib -lA2SQuery -lstdc++
-#cgo CFLAGS: -I${SRCDIR}/../lib
-#include "a2s_query_handler_wrapper.h"
-*/
-import "C"
-
 import (
-	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
-	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
-	"strconv"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
-	"unsafe"
-
 	"github.com/bwmarrin/discordgo"
+	"github.com/nxadm/tail"
 	"github.com/royarchl/af-server-bot/bot/commands"
+	"github.com/royarchl/af-server-bot/bot/shared"
 )
 
 // [31 JAN 2025 @ 3:39 PM GMT-8] Forgive me for the shitshow that is about to ensue
 // [31 JAN 2025 @ 7:53 PM GMT-8] Turns out this worked out pretty nicely
 // [01 FEB 2025 @ 5:11 PM GMT-8] This came out very clean, ngl
 
-var (
-	BotToken string
-)
-
-func CheckNilErr(e error) {
-	if e != nil {
-		log.Fatalf("Error message: %v", e)
-	}
-}
-
-type GoPayload struct {
-	rulesMap  map[string]string
-	errorCode int
-	errorMsg  string
-}
-
-func getServerRules(ip string, port int) *GoPayload {
-	payload := C.a2s_query_server_rules(C.CString(ip), C.uint16_t(port))
-
-	pPayload := (*C.Payload)(payload)
-
-	rules := pPayload.m_pMapRules
-	size := pPayload.m_unRulesSize
-
-	mapGoRules := make(map[string]string)
-
-	for i := C.size_t(0); i < size; i++ {
-		rulePtr := (*C.ServerRule)(unsafe.Pointer(uintptr(unsafe.Pointer(rules)) + uintptr(i)*unsafe.Sizeof(*rules)))
-
-		goRule := C.GoString(rulePtr.m_pchRule)
-		goValue := C.GoString(rulePtr.m_pchValue)
-
-		mapGoRules[goRule] = goValue
-	}
-
-	success := C.a2s_free_rules_memory(payload)
-	if !success {
-		log.Fatalln("Memory wasn't freed")
-	}
-
-	return &GoPayload{
-		rulesMap:  mapGoRules,
-		errorCode: int(pPayload.m_nErrorCode),
-		errorMsg:  C.GoString(pPayload.m_szErrorMsg),
-	}
-}
-
-func getServerVersion() int {
-	type ServerResponse struct {
-		Data map[string]struct {
-			ChangeNumber int `json:"_change_number"`
-		} `json:"data"`
-	}
-
-	resp, err := http.Get("https://api.steamcmd.net/v1/info/2857200")
-	CheckNilErr(err)
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	CheckNilErr(err)
-
-	var serverVersion ServerResponse
-	if err := json.Unmarshal(body, &serverVersion); err != nil {
-		log.Fatalf("Error parsing JSON: %v", err)
-	}
-
-	return serverVersion.Data["2857200"].ChangeNumber
-}
+var BotToken string
 
 func Run() {
 	session, err := discordgo.New("Bot " + BotToken)
-	CheckNilErr(err)
+	shared.CheckNilErr(err)
 
 	session.AddHandler(commands.SetCommands)
 
 	err = session.Open()
-	CheckNilErr(err)
+	shared.CheckNilErr(err)
 	defer session.Close()
 
 	commands.RegisterCommands(session)
 
 	log.Println("Bot running... (Press Ctrl-C to exit)")
 
-	ipAddr := os.Getenv("IP_ADDR")
-	port, err := strconv.Atoi(os.Getenv("PORT"))
-	CheckNilErr(err)
-
-	channelID := os.Getenv("CHANNEL_ID")
+	shared.SetEnvVariables()
 
 	go func() {
-		log.Println("Beginning server query loop...")
+		shared.InitServerQueryLoop(session)
+	}()
 
-		prevPlayerCount := -1
-		maxPlayers := os.Getenv("MAX_PLAYERS")
+	// https://pkg.go.dev/github.com/nxadm/tail#section-readme
+	// https://pkg.go.dev/io#SectionReader.Seek
+	go func() {
+		backupsEnabled := false
 
-		serverVersion := getServerVersion()
+		sourceDirAbs := os.Getenv("SRVR_SAVE_DIR")
+		tailedFile := os.Getenv("LOG_FILE")
+		tailedFilePath := filepath.Join(sourceDirAbs, tailedFile)
 
-		errorMap := map[int]bool{
-			5001: false, // Failure to create socket
-			5002: false, // Failue to apply socket timeout
-			5003: false, // Response timeout
-			5004: false, // Failure to receive data
-			5005: false, // Failure to send initial query
-			5006: false, // Server response too small
-			5007: false, // Failure to send challenge query
-			5008: false, // Challenge response too small
-			4001: false, // No packets found
-			4002: false, // Incomplete rule-value pair
-		}
+		t, _ := tail.TailFile(tailedFilePath, tail.Config{
+			Follow: true,
+			ReOpen: true,
+			Location: &tail.SeekInfo{
+				Offset: 0,
+				Whence: io.SeekEnd,
+			},
+		})
 
-		for {
-			payload := getServerRules(ipAddr, port)
+		// Update to do something that isn't panicking
+		// if err != nil {
+		// 	panic(err)
+		// }
 
-			if payload.errorCode != 0 {
-				if errorMap[payload.errorCode] == false {
-					// This check might not even be necessary because it seems everything returns as 5003
-					if payload.errorCode == 5003 {
+		NO_PLAYERS := "0"
+		for line := range t.Lines {
+			if strings.Contains(line.Text, "PlayerCount") {
+				re := regexp.MustCompile(`PlayerCount.*\((\d+)\)`)
+				matches := re.FindStringSubmatch(line.Text)
 
-						currentTime := time.Now()
-						loc, _ := time.LoadLocation("America/Los_Angeles")
-						localTime := currentTime.In(loc)
-
-						formattedTime := localTime.Format("(02 Jan 2006 - 3:04 PM MST)")
-
-						if getServerVersion() != serverVersion {
-							activity := &discordgo.Activity{
-								Name:  "template",
-								Type:  discordgo.ActivityTypeCustom,
-								State: "Server update available",
-							}
-
-							statusData := discordgo.UpdateStatusData{
-								Status:     string(discordgo.StatusDoNotDisturb),
-								Activities: []*discordgo.Activity{activity},
-							}
-
-							session.UpdateStatusComplex(statusData)
-							session.ChannelMessageSend(channelID, fmt.Sprintf("`%s`  **Error:** Server is out of date. An update is available.", formattedTime))
-						} else {
-							statusMessage := fmt.Sprintf("%d - %s", payload.errorCode, payload.errorMsg)
-							activity := &discordgo.Activity{
-								Name:  "template",
-								Type:  discordgo.ActivityTypeCustom,
-								State: statusMessage,
-							}
-
-							statusData := discordgo.UpdateStatusData{
-								Status:     string(discordgo.StatusIdle),
-								Activities: []*discordgo.Activity{activity},
-							}
-
-							session.UpdateStatusComplex(statusData)
-
-							session.ChannelMessageSend(channelID, fmt.Sprintf("`%s`  **Error:** %d - %s", formattedTime, payload.errorCode, payload.errorMsg))
-						}
-					}
-					// Send a message into bot/logs channel about the error/exception
-					errorMap[payload.errorCode] = true
-				}
-			} else {
-				// SUCCESS - everything working properly
-
-				if errorMap[5003] == true {
-					serverVersion = getServerVersion()
-				}
-
-				for key := range errorMap {
-					errorMap[key] = false
-				}
-
-				commands.ServerSettings = payload.rulesMap
-
-				currentPlayerCount, err := strconv.Atoi(commands.ServerSettings["PlayerCount_i"])
-				CheckNilErr(err)
-
-				if currentPlayerCount != prevPlayerCount {
-					statusMessage := fmt.Sprintf("Online - Active Players: %d/%s", currentPlayerCount, maxPlayers)
-					session.UpdateCustomStatus(statusMessage)
+				if matches[1] != NO_PLAYERS {
+					backupsEnabled = true
+					session.ChannelMessageSendEmbed(shared.BotChannelID, &discordgo.MessageEmbed{
+						Type:        discordgo.EmbedTypeRich,
+						Title:       "Backups enabled.",
+						Description: "Player presence detected. Server snapshots will begin being saved.\n\n-# Use the command `/tag-snapshot` to mark a backup for manual restore.",
+						Color:       0x00FF00,
+					})
+				} else {
+					backupsEnabled = false
+					session.ChannelMessageSendEmbed(shared.BotChannelID, &discordgo.MessageEmbed{
+						Type:        discordgo.EmbedTypeRich,
+						Title:       "Backups suspended.",
+						Description: "No players detected. Saves will be ignored to preserve system resources.",
+						Color:       0x808080,
+					})
 				}
 			}
 
-			now := time.Now()
+			if backupsEnabled == true {
+				if !strings.Contains(line.Text, "autosaving") {
+					continue
+				}
 
-			nextFiveMinute := now.Truncate(5 * time.Minute).Add(5 * time.Minute)
-			sleepDuration := nextFiveMinute.Sub(now)
+				// STEPS
+				// 0. Assign the required variables
+				// 1. Make the archive/ directory, in case it doesn't exist
+				// 2. Grab all the files from the Saved/ directory
+				// 3. Generate the backup name using timestamp and server info
+				// 4. Create the archive with 7z in the proper directory
+				// 5. Send the message to [REDACTED]
+				// 6. Delete the uploaded file
 
-			time.Sleep(sleepDuration)
+				// [ 0 ]
+				saveDirRel := "./archives"
+				archiveEncPwd := os.Getenv("ENC_PASSWD")
+				backupsChannelID := os.Getenv("BKP_CHANNEL_ID")
+
+				// [ 1 ]
+				err := os.MkdirAll(saveDirRel, 0755)
+				shared.CheckNilErr(err)
+
+				// [ 2 ]
+				var files []string
+				err = filepath.WalkDir(sourceDirAbs, func(path string, d fs.DirEntry, err error) error {
+					if err != nil {
+						fmt.Printf("Error accessing path %q: %v\n", path, err)
+						return err // stops recurse
+					}
+
+					if path == sourceDirAbs {
+						return nil // SKIP
+					}
+
+					relPath, _ := filepath.Rel(sourceDirAbs, path)
+					if filepath.Dir(relPath) == "." {
+						files = append(files, path)
+					}
+
+					return nil
+				})
+
+				// [ 3 ]
+				timestamp := time.Now().Format("2006.01.02-15.04.05")
+				archiveName := fmt.Sprintf("Backup_%s_%s.locked.7z", timestamp, shared.ServerSettings["ServerName_s"])
+				archivePath := filepath.Join(saveDirRel, archiveName)
+
+				// [ 4 ]
+				args := []string{
+					"a",                  // add files to archive
+					"-t7z",               // 7z archive format
+					"-m0=lzma2",          // compression method
+					"-mx=9",              // max compression
+					"-ms=on",             // solid compression
+					"-md=64m",            // 64 MB dictionary size
+					"-ssp",               // prevent modifying Last Access Time
+					"-stl",               // set archive timestamp to last modified file
+					"-p" + archiveEncPwd, // set encryption password
+					"-mhe=on",            // encrypt file content AND names
+					archivePath,
+				}
+				args = append(args, files...)
+
+				cmd := exec.Command("7z", args...)
+				_, err = cmd.CombinedOutput()
+				shared.CheckNilErr(err)
+
+				// [ 5 ]
+				file, err := os.Open(archivePath)
+				shared.CheckNilErr(err)
+				defer file.Close()
+
+				backupFile := &discordgo.File{
+					Name:   archiveName,
+					Reader: file,
+				}
+
+				m, err := session.ChannelMessageSendComplex(backupsChannelID, &discordgo.MessageSend{
+					Content: "** **\n-# This is an automated backup of the game state.",
+					Files:   []*discordgo.File{backupFile},
+				})
+				shared.SnapshotChannelID = m.ChannelID
+				shared.LastSnapshotMessageID = m.ID
+
+				// [ 6 ]
+				if err == nil {
+					os.Remove(archivePath)
+				}
+			}
 		}
 	}()
 

@@ -17,3 +17,5 @@ cpp-source/build/
 
 # 3rd-party dependencies
 cpp-source/external/
+
+test/
